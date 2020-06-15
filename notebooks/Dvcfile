@@ -1,0 +1,5 @@
+md5: 7844e4310e4a8a92e3d6e24b272aa631
+cmd: '../src/main.py train --model sklearn.svm.SVC --args {gamma: 0.01}'
+deps:
+- md5: 68cfba0217fe76925c3bd3539137c6c5
+  path: dump/folds.pickle

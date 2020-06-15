@@ -1,0 +1,19 @@
+apiVersion: machinelearning.seldon.io/v1alpha2
+kind: SeldonDeployment
+metadata:
+  namespace: kubeflow
+  name: visum-seldon-deployment
+spec:
+  name: mnist
+  predictors:
+  - graph:
+      children: []
+      implementation: SKLEARN_SERVER
+      modelUri: pvc://pipeline-pv/clf.pickle
+      name: classifier
+      parameters:
+        - name: method
+          type: STRING
+          value: predict
+    name: default
+    replicas: 1
