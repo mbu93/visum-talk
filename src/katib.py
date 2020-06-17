@@ -26,7 +26,7 @@ def trial_template(name, image, replicas, model, data, outdir, repo):
         "kind": "Job",
         "metadata": {
             "name": "{{.Trial}}",
-            "namespace": "{{.NameSpace}}"
+            "namespace": "mb18lasy"
         },
         "spec": {
             "template": {

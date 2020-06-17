@@ -9,7 +9,7 @@ spec:
   - graph:
       children: []
       implementation: SKLEARN_SERVER
-      modelUri: pvc://pipeline-pv/models/clf.pickle
+      modelUri: pvc://pipeline-pv/models/visum/model.joblib
       name: classifier
       parameters:
         - name: method
