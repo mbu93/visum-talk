@@ -86,7 +86,7 @@ def train(model: str, out: str, args: str):
 @main.command("validate")
 @click.option("--out", default="/out", type=str)
 def validate(out):
-    score = 0.
+    score = 0.0
     cnf = np.zeros((10, 10))
     clf = load(os.path.join(out, "clf.pickle"))
 
@@ -101,39 +101,15 @@ def validate(out):
 
     cnf /= len(cnf)
     cnf /= cnf.sum(axis=1)
-    sn.heatmap(cnf, annot=True, )
+    sn.heatmap(
+        cnf,
+        annot=True,
+    )
     plt.savefig(os.path.join(out, "conf.svg"))
 
     cv_score = score / len(folds)
     print("Accuracy: {}".format(cv_score))
     return cv_score
-
-
-@main.command("tune")
-@click.option("--gamma", default=1, type=float)
-@click.option("--neighbors", default=1, type=int)
-@click.option("--model", default="sklearn.svm.SVC", type=str)
-@click.option("--out", default="/out", type=str)
-def tune(gamma, neighbors, model, out) -> float:
-    clf_str = model.split(".")[-1]
-    lib = model.replace(clf_str, "")[:-1]
-    clf = getattr(import_module(lib), clf_str)
-
-    if clf_str == "SVC":
-        clf = clf(gamma)
-    elif clf_str == "KNeighborsClassifier":
-        clf = clf(neighbors)
-    else:
-        clf = clf()
-
-    with open("{}/folds.pickle".format(out), "rb") as fp:
-        folds = dill.load(fp)
-
-    ds = folds[0]
-    clf.fit(ds.train.X.reshape(-1, 8 * 8), ds.train.y)
-    score = clf.score(ds.test.X.reshape(-1, 8 * 8), ds.test.y)
-
-    print("Epoch 0: \naccuracy={}".format(score))
 
 
 if __name__ == "__main__":

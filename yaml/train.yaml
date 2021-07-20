@@ -1,0 +1,66 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: training-step-
+  annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline_compilation_time: '2021-07-14T16:00:11.838539',
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "training the model after
+      data preprocessing", "name": "training-step"}'}
+  labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4}
+spec:
+  entrypoint: training-step
+  templates:
+  - name: preprocess
+    container:
+      args:
+      - |
+        set -euo pipefail
+        python main.py preprocess --out .
+        mkdir -p /out
+        echo copying outputs
+        cp -r folds.pickle /out/folds.pickle
+      command: [bash, -c]
+      image: mbu93/visum-pipeline-runner:latest
+      imagePullPolicy: Always
+      volumeMounts:
+      - {mountPath: /out, name: output-artifacts}
+    outputs:
+      artifacts:
+      - {name: preprocess-folds, path: /out/folds.pickle}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+    volumes:
+    - emptyDir: {}
+      name: output-artifacts
+  - name: train
+    container:
+      args:
+      - |
+        set -euo pipefail
+        cp -r /tmp/inputs/input-0/data folds.pickle
+        python main.py train --out . --model sklearn.neighbors.KNeighborsClassifier --args '{"n_neighbors": 10}'
+      command: [bash, -c]
+      image: mbu93/visum-pipeline-runner:latest
+      imagePullPolicy: Always
+      volumeMounts:
+      - {mountPath: /out, name: output-artifacts}
+    inputs:
+      artifacts:
+      - {name: preprocess-folds, path: /tmp/inputs/input-0/data}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+    volumes:
+    - emptyDir: {}
+      name: output-artifacts
+  - name: training-step
+    dag:
+      tasks:
+      - {name: preprocess, template: preprocess}
+      - name: train
+        template: train
+        dependencies: [preprocess]
+        arguments:
+          artifacts:
+          - {name: preprocess-folds, from: '{{tasks.preprocess.outputs.artifacts.preprocess-folds}}'}
+  arguments:
+    parameters: []
+  serviceAccountName: pipeline-runner

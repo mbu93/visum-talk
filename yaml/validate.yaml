@@ -1,0 +1,127 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: validation-step-
+  annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline_compilation_time: '2021-07-14T16:36:02.975679',
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "cross validate the model",
+      "inputs": [{"default": ".", "name": "out", "optional": true, "type": "String"}],
+      "name": "validation-step"}'}
+  labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4}
+spec:
+  entrypoint: validation-step
+  templates:
+  - name: preprocess
+    container:
+      args:
+      - |
+        set -euo pipefail
+        python main.py preprocess --out {{inputs.parameters.out}}
+        mkdir -p /out
+        echo copying outputs
+        cp -r folds.pickle /out/folds.pickle
+      command: [bash, -c]
+      image: mbu93/visum-pipeline-runner:latest
+      imagePullPolicy: Always
+      volumeMounts:
+      - {mountPath: /out, name: output-artifacts}
+    inputs:
+      parameters:
+      - {name: out}
+    outputs:
+      artifacts:
+      - {name: preprocess-folds, path: /out/folds.pickle}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+    volumes:
+    - emptyDir: {}
+      name: output-artifacts
+  - name: train
+    container:
+      args:
+      - |
+        set -euo pipefail
+        cp -r /tmp/inputs/input-0/data folds.pickle
+        python main.py train --out {{inputs.parameters.out}} --model sklearn.neighbors.KNeighborsClassifier --args '{"n_neighbors": 20}'
+        mkdir -p /out
+        echo copying outputs
+        cp -r clf.pickle /out/clf.pickle
+      command: [bash, -c]
+      image: mbu93/visum-pipeline-runner:latest
+      imagePullPolicy: Always
+      volumeMounts:
+      - {mountPath: /out, name: output-artifacts}
+    inputs:
+      parameters:
+      - {name: out}
+      artifacts:
+      - {name: preprocess-folds, path: /tmp/inputs/input-0/data}
+    outputs:
+      artifacts:
+      - {name: train-model, path: /out/clf.pickle}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+    volumes:
+    - emptyDir: {}
+      name: output-artifacts
+  - name: validate
+    container:
+      args:
+      - |
+        set -euo pipefail
+        cp -r /tmp/inputs/input-0/data clf.pickle
+        cp -r /tmp/inputs/input-1/data folds.pickle
+        python main.py validate --out {{inputs.parameters.out}}
+        mkdir -p /out
+        echo copying outputs
+        cp -r conf.svg /out/conf.svg
+      command: [bash, -c]
+      image: mbu93/visum-pipeline-runner:latest
+      imagePullPolicy: Always
+      volumeMounts:
+      - {mountPath: /out, name: output-artifacts}
+    inputs:
+      parameters:
+      - {name: out}
+      artifacts:
+      - {name: train-model, path: /tmp/inputs/input-0/data}
+      - {name: preprocess-folds, path: /tmp/inputs/input-1/data}
+    outputs:
+      artifacts:
+      - {name: validate-confusion, path: /out/conf.svg}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+    volumes:
+    - emptyDir: {}
+      name: output-artifacts
+  - name: validation-step
+    inputs:
+      parameters:
+      - {name: out}
+    dag:
+      tasks:
+      - name: preprocess
+        template: preprocess
+        arguments:
+          parameters:
+          - {name: out, value: '{{inputs.parameters.out}}'}
+      - name: train
+        template: train
+        dependencies: [preprocess]
+        arguments:
+          parameters:
+          - {name: out, value: '{{inputs.parameters.out}}'}
+          artifacts:
+          - {name: preprocess-folds, from: '{{tasks.preprocess.outputs.artifacts.preprocess-folds}}'}
+      - name: validate
+        template: validate
+        dependencies: [preprocess, train]
+        arguments:
+          parameters:
+          - {name: out, value: '{{inputs.parameters.out}}'}
+          artifacts:
+          - {name: preprocess-folds, from: '{{tasks.preprocess.outputs.artifacts.preprocess-folds}}'}
+          - {name: train-model, from: '{{tasks.train.outputs.artifacts.train-model}}'}
+  arguments:
+    parameters:
+    - {name: out, value: .}
+  serviceAccountName: pipeline-runner

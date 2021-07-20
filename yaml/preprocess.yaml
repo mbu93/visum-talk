@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: preprocessing-step-
+  annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline_compilation_time: '2021-07-14T15:20:29.887985',
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "preprocessing step of
+      the VISUM example", "name": "preprocessing-step"}'}
+  labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4}
+spec:
+  entrypoint: preprocessing-step
+  templates:
+  - name: preprocess
+    container:
+      args: [python main.py preprocess --out /out]
+      command: [bash, -c]
+      image: mbu93/visum-pipeline-runner
+      volumeMounts:
+      - {mountPath: /out, name: output-artifacts}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+    volumes:
+    - emptyDir: {}
+      name: output-artifacts
+  - name: preprocessing-step
+    dag:
+      tasks:
+      - {name: preprocess, template: preprocess}
+  arguments:
+    parameters: []
+  serviceAccountName: pipeline-runner

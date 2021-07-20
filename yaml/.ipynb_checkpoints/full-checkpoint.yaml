@@ -1,0 +1,234 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: full-
+  annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline_compilation_time: '2021-07-15T12:14:24.420484',
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "Complete pipeline", "inputs":
+      [{"default": ".", "name": "out", "optional": true, "type": "String"}], "name":
+      "full"}'}
+  labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4}
+spec:
+  entrypoint: full
+  templates:
+  - name: delete-deployment
+    resource:
+      action: delete
+      flags: [--wait=false]
+      manifest: |
+        apiVersion: machinelearning.seldon.io/v1
+        kind: SeldonDeployment
+        metadata:
+          name: sklearn
+          namespace: twin-models
+        spec:
+          annotations:
+            seldon.io/executor: 'true'
+          name: sklearn-example
+          predictors:
+          - componentSpecs: null
+            graph:
+              children: []
+              envSecretRefName: seldon-minio-credentials
+              implementation: SKLEARN_SERVER
+              modelUri: s3://seldon-models/sklearn-example
+              name: classifier
+            name: default
+            replicas: 1
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+  - name: deploy-image
+    resource:
+      action: create
+      manifest: |
+        apiVersion: machinelearning.seldon.io/v1
+        kind: SeldonDeployment
+        metadata:
+          name: sklearn
+          namespace: twin-models
+        spec:
+          annotations:
+            seldon.io/executor: 'true'
+          name: sklearn-example
+          predictors:
+          - componentSpecs: null
+            graph:
+              children: []
+              envSecretRefName: seldon-minio-credentials
+              implementation: SKLEARN_SERVER
+              modelUri: s3://seldon-models/sklearn-example
+              name: classifier
+            name: default
+            replicas: 1
+    outputs:
+      parameters:
+      - name: deploy-image-manifest
+        valueFrom: {jsonPath: '{}'}
+      - name: deploy-image-name
+        valueFrom: {jsonPath: '{.metadata.name}'}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+  - name: full
+    inputs:
+      parameters:
+      - {name: out}
+    dag:
+      tasks:
+      - name: delete-deployment
+        template: delete-deployment
+        dependencies: [upload]
+      - name: deploy-image
+        template: deploy-image
+        dependencies: [delete-deployment]
+      - name: preprocess
+        template: preprocess
+        arguments:
+          parameters:
+          - {name: out, value: '{{inputs.parameters.out}}'}
+      - name: train
+        template: train
+        dependencies: [preprocess]
+        arguments:
+          parameters:
+          - {name: out, value: '{{inputs.parameters.out}}'}
+          artifacts:
+          - {name: preprocess-folds, from: '{{tasks.preprocess.outputs.artifacts.preprocess-folds}}'}
+      - name: upload
+        template: upload
+        dependencies: [train]
+        arguments:
+          artifacts:
+          - {name: train-model, from: '{{tasks.train.outputs.artifacts.train-model}}'}
+      - name: validate
+        template: validate
+        dependencies: [preprocess, train]
+        arguments:
+          parameters:
+          - {name: out, value: '{{inputs.parameters.out}}'}
+          artifacts:
+          - {name: preprocess-folds, from: '{{tasks.preprocess.outputs.artifacts.preprocess-folds}}'}
+          - {name: train-model, from: '{{tasks.train.outputs.artifacts.train-model}}'}
+  - name: preprocess
+    container:
+      args:
+      - |
+        set -euo pipefail
+        python main.py preprocess --out {{inputs.parameters.out}}
+        mkdir -p /out
+        echo copying outputs
+        cp -r folds.pickle /out/folds.pickle
+      command: [bash, -c]
+      image: mbu93/visum-pipeline-runner:latest
+      imagePullPolicy: Always
+      volumeMounts:
+      - {mountPath: /out, name: output-artifacts}
+    inputs:
+      parameters:
+      - {name: out}
+    outputs:
+      artifacts:
+      - {name: preprocess-folds, path: /out/folds.pickle}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+    volumes:
+    - emptyDir: {}
+      name: output-artifacts
+  - name: train
+    container:
+      args:
+      - |
+        set -euo pipefail
+        cp -r /tmp/inputs/input-0/data folds.pickle
+        python main.py train --out {{inputs.parameters.out}} --model sklearn.svm.SVC --args '{"gamma": 0.01, "probability": true}'
+        mkdir -p /out
+        echo copying outputs
+        cp -r clf.pickle /out/clf.pickle
+      command: [bash, -c]
+      image: mbu93/visum-pipeline-runner:latest
+      imagePullPolicy: Always
+      volumeMounts:
+      - {mountPath: /out, name: output-artifacts}
+    inputs:
+      parameters:
+      - {name: out}
+      artifacts:
+      - {name: preprocess-folds, path: /tmp/inputs/input-0/data}
+    outputs:
+      artifacts:
+      - {name: train-model, path: /out/clf.pickle}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+    volumes:
+    - emptyDir: {}
+      name: output-artifacts
+  - name: upload
+    container:
+      args:
+      - |
+        set -euo pipefail
+        cp -r /tmp/inputs/input-0/data clf.pickle
+
+        mc alias set minio $MINIO_HOST $MINIO_ACCESS_KEY $MINIO_SECRET_KEY;
+        mc cp clf.pickle minio/seldon-models/sklearn-example/model.joblib
+      command: [bash, -c]
+      env:
+      - name: MINIO_SECRET_KEY
+        valueFrom:
+          secretKeyRef: {key: AWS_SECRET_ACCESS_KEY, name: minio-credentials}
+      - name: MINIO_ACCESS_KEY
+        valueFrom:
+          secretKeyRef: {key: AWS_ACCESS_KEY_ID, name: minio-credentials}
+      - name: MINIO_HOST
+        valueFrom:
+          secretKeyRef: {key: AWS_ENDPOINT_URL, name: minio-credentials}
+      - name: USE_SSL
+        valueFrom:
+          secretKeyRef: {key: USE_SSL, name: minio-credentials}
+      image: minio/mc
+      imagePullPolicy: Always
+      volumeMounts:
+      - {mountPath: /out, name: output-artifacts}
+      - {mountPath: /root/.minio-creds, name: minio-credentials, readOnly: true}
+    inputs:
+      artifacts:
+      - {name: train-model, path: /tmp/inputs/input-0/data}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+    volumes:
+    - name: minio-credentials
+      secret: {defaultMode: 384, secretName: minio-credentials}
+    - emptyDir: {}
+      name: output-artifacts
+  - name: validate
+    container:
+      args:
+      - |
+        set -euo pipefail
+        cp -r /tmp/inputs/input-0/data clf.pickle
+        cp -r /tmp/inputs/input-1/data folds.pickle
+        python main.py validate --out {{inputs.parameters.out}}
+        mkdir -p /out
+        echo copying outputs
+        cp -r conf.svg /out/conf.svg
+      command: [bash, -c]
+      image: mbu93/visum-pipeline-runner:latest
+      imagePullPolicy: Always
+      volumeMounts:
+      - {mountPath: /out, name: output-artifacts}
+    inputs:
+      parameters:
+      - {name: out}
+      artifacts:
+      - {name: train-model, path: /tmp/inputs/input-0/data}
+      - {name: preprocess-folds, path: /tmp/inputs/input-1/data}
+    outputs:
+      artifacts:
+      - {name: validate-confusion, path: /out/conf.svg}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+    volumes:
+    - emptyDir: {}
+      name: output-artifacts
+  arguments:
+    parameters:
+    - {name: out, value: .}
+  serviceAccountName: pipeline-runner

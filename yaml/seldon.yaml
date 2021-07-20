@@ -1,0 +1,78 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: seldon-step-
+  annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline_compilation_time: '2021-07-14T17:51:55.479541',
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "seldon deployment step
+      of the VISUM example", "name": "seldon-step"}'}
+  labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4}
+spec:
+  entrypoint: seldon-step
+  templates:
+  - name: delete-deployment
+    resource:
+      action: delete
+      flags: [--wait=false]
+      manifest: |
+        apiVersion: machinelearning.seldon.io/v1alpha2
+        kind: SeldonDeployment
+        metadata:
+          name: sklearn
+          namespace: twin-models
+        spec:
+          name: iris-predict
+          predictors:
+          - graph:
+              children: []
+              implementation: SKLEARN_SERVER
+              modelUri: gs://seldon-models/sklearn/iris
+              name: classifier
+              parameters:
+              - name: method
+                type: STRING
+                value: predict
+            name: default
+            replicas: 1
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+  - name: deploy-image
+    resource:
+      action: create
+      manifest: |
+        apiVersion: machinelearning.seldon.io/v1alpha2
+        kind: SeldonDeployment
+        metadata:
+          name: sklearn
+          namespace: twin-models
+        spec:
+          name: iris-predict
+          predictors:
+          - graph:
+              children: []
+              implementation: SKLEARN_SERVER
+              modelUri: gs://seldon-models/sklearn/iris
+              name: classifier
+              parameters:
+              - name: method
+                type: STRING
+                value: predict
+            name: default
+            replicas: 1
+    outputs:
+      parameters:
+      - name: deploy-image-manifest
+        valueFrom: {jsonPath: '{}'}
+      - name: deploy-image-name
+        valueFrom: {jsonPath: '{.metadata.name}'}
+    metadata:
+      labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.6.4, pipelines.kubeflow.org/pipeline-sdk-type: kfp}
+  - name: seldon-step
+    dag:
+      tasks:
+      - {name: delete-deployment, template: delete-deployment}
+      - name: deploy-image
+        template: deploy-image
+        dependencies: [delete-deployment]
+  arguments:
+    parameters: []
+  serviceAccountName: pipeline-runner
